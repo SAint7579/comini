@@ -8,6 +8,9 @@ pandas>=2.1.0
 openpyxl>=3.1.0
 tqdm>=4.66.0
 
+# PDF processing
+marker-pdf>=1.0.0
+
 # Web scraping
 requests>=2.31.0
 beautifulsoup4>=4.12.0

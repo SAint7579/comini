@@ -8,6 +8,7 @@ Supports chunked processing for large files with async parallelization.
 """
 
 import sys
+import tempfile
 from pathlib import Path
 import asyncio
 from typing import BinaryIO
@@ -33,8 +34,12 @@ logger = get_logger("comini.rfq")
 # Configuration
 # ============================================================================
 
-# Maximum rows per chunk for LLM processing
+# Maximum rows per chunk for LLM processing (for CSV/Excel)
 CHUNK_SIZE = 50  # Adjust based on token limits and row complexity
+
+# Maximum characters per chunk for PDF text processing
+PDF_CHUNK_SIZE = 4000  # ~1000 tokens, safe for context window
+
 MAX_CONCURRENT_CHUNKS = 5  # Limit concurrent API calls
 
 
@@ -155,6 +160,105 @@ def load_csv(file_path: str | Path | BinaryIO) -> pd.DataFrame:
 def load_excel(file_path: str | Path | BinaryIO) -> pd.DataFrame:
     """Load an Excel file into a DataFrame."""
     return pd.read_excel(file_path)
+
+
+def load_pdf_with_marker(file_path: str | Path | BinaryIO) -> str:
+    """
+    Load a PDF file and convert to markdown text using marker.
+    
+    Args:
+        file_path: Path to PDF file or file-like object
+        
+    Returns:
+        Extracted text in markdown format
+    """
+    from marker.converters.pdf import PdfConverter
+    from marker.models import create_model_dict
+    from marker.output import text_from_rendered
+    
+    # Handle file-like objects by writing to temp file
+    if hasattr(file_path, 'read'):
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
+            tmp.write(file_path.read())
+            tmp_path = tmp.name
+        try:
+            return _convert_pdf_with_marker(tmp_path)
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+    else:
+        return _convert_pdf_with_marker(str(file_path))
+
+
+def _convert_pdf_with_marker(pdf_path: str) -> str:
+    """Internal function to convert PDF using marker."""
+    from marker.converters.pdf import PdfConverter
+    from marker.models import create_model_dict
+    from marker.output import text_from_rendered
+    
+    logger.info(f"Converting PDF with marker: {pdf_path}")
+    
+    # Create model dict and converter
+    model_dict = create_model_dict()
+    converter = PdfConverter(artifact_dict=model_dict)
+    
+    # Convert PDF to markdown
+    rendered = converter(pdf_path)
+    text, _, _ = text_from_rendered(rendered)
+    
+    logger.info(f"PDF converted: {len(text)} characters extracted")
+    return text
+
+
+def chunk_text(text: str, chunk_size: int = PDF_CHUNK_SIZE) -> list[str]:
+    """
+    Split text into chunks for LLM processing.
+    
+    Tries to split on paragraph boundaries for better context.
+    
+    Args:
+        text: Text to split
+        chunk_size: Maximum characters per chunk
+        
+    Returns:
+        List of text chunks
+    """
+    if len(text) <= chunk_size:
+        return [text]
+    
+    chunks = []
+    
+    # Split by double newlines (paragraphs) first
+    paragraphs = text.split('\n\n')
+    
+    current_chunk = ""
+    for para in paragraphs:
+        # If adding this paragraph exceeds limit, save current and start new
+        if len(current_chunk) + len(para) + 2 > chunk_size:
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+            
+            # If single paragraph is too long, split by lines
+            if len(para) > chunk_size:
+                lines = para.split('\n')
+                current_chunk = ""
+                for line in lines:
+                    if len(current_chunk) + len(line) + 1 > chunk_size:
+                        if current_chunk:
+                            chunks.append(current_chunk.strip())
+                        current_chunk = line
+                    else:
+                        current_chunk += '\n' + line if current_chunk else line
+            else:
+                current_chunk = para
+        else:
+            current_chunk += '\n\n' + para if current_chunk else para
+    
+    # Don't forget the last chunk
+    if current_chunk:
+        chunks.append(current_chunk.strip())
+    
+    logger.info(f"Split text into {len(chunks)} chunks of ~{chunk_size} chars")
+    return chunks
 
 
 def dataframe_to_text(df: pd.DataFrame, include_row_numbers: bool = True) -> str:
@@ -279,6 +383,125 @@ async def process_chunk_async(
 
 
 # ============================================================================
+# PDF Text Chunk Processing Functions
+# ============================================================================
+
+def process_single_text_chunk(
+    text_chunk: str,
+    chunk_index: int
+) -> list[RFQItem]:
+    """
+    Process a single text chunk from a PDF.
+    
+    Args:
+        text_chunk: Text chunk to process
+        chunk_index: Index of this chunk (for logging)
+        
+    Returns:
+        List of RFQItems extracted from this chunk
+    """
+    logger.debug(f"Processing text chunk {chunk_index + 1} ({len(text_chunk)} chars)")
+    
+    # Set up LLM with structured output
+    llm = get_rfq_processor()
+    structured_llm = llm.with_structured_output(ChunkResult)
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", RFQ_EXTRACTION_PROMPT),
+        ("human", """Process this section of an RFQ document and extract all product requests.
+
+This is text extracted from a PDF document. Each line or item may represent a product request.
+
+Content:
+{content}
+
+Extract each item with its raw text and optimized search query. 
+If no product requests are found in this section, return an empty list.""")
+    ])
+    
+    chain = prompt | structured_llm
+    
+    # Process with LLM
+    result = chain.invoke({"content": text_chunk})
+    
+    logger.debug(f"Text chunk {chunk_index + 1}: extracted {len(result.items)} items")
+    return result.items
+
+
+async def process_text_chunk_async(
+    text_chunk: str,
+    chunk_index: int,
+    semaphore: asyncio.Semaphore
+) -> list[RFQItem]:
+    """
+    Async wrapper for processing a single text chunk with concurrency control.
+    """
+    async with semaphore:
+        logger.info(f"Starting text chunk {chunk_index + 1}")
+        items = await asyncio.to_thread(
+            process_single_text_chunk,
+            text_chunk,
+            chunk_index
+        )
+        logger.info(f"Completed text chunk {chunk_index + 1}: {len(items)} items")
+        return items
+
+
+async def process_pdf_text_async(
+    text: str,
+    chunk_size: int = PDF_CHUNK_SIZE,
+    max_concurrent: int = MAX_CONCURRENT_CHUNKS
+) -> RFQProcessingResult:
+    """
+    Process PDF text with chunking and async parallelization.
+    
+    Args:
+        text: Full text extracted from PDF
+        chunk_size: Maximum characters per chunk
+        max_concurrent: Maximum concurrent LLM calls
+        
+    Returns:
+        RFQProcessingResult with all extracted items
+    """
+    logger.info(f"Processing PDF text ({len(text)} chars, chunk_size={chunk_size})")
+    
+    # Split into chunks
+    chunks = chunk_text(text, chunk_size)
+    num_chunks = len(chunks)
+    
+    # Create semaphore for concurrency control
+    semaphore = asyncio.Semaphore(max_concurrent)
+    
+    # Process all chunks in parallel
+    logger.info(f"Processing {num_chunks} text chunks with max {max_concurrent} concurrent")
+    
+    tasks = [
+        process_text_chunk_async(chunk, idx, semaphore)
+        for idx, chunk in enumerate(chunks)
+    ]
+    
+    # Gather results (maintains order)
+    chunk_results = await asyncio.gather(*tasks)
+    
+    # Concatenate all items
+    all_items: list[RFQItem] = []
+    for items in chunk_results:
+        all_items.extend(items)
+    
+    result = RFQProcessingResult(
+        items=all_items,
+        source_type="pdf",
+        total_items=len(all_items),
+        chunks_processed=num_chunks,
+        raw_content_preview=text[:500]
+    )
+    
+    logger.info(f"Extracted {result.total_items} items from {num_chunks} PDF chunks")
+    
+    return result
+
+
+# ============================================================================
 # Main Processing Functions
 # ============================================================================
 
@@ -361,15 +584,16 @@ def process_rfq_dataframe(
 async def process_rfq_file_async(
     file_path: str | Path | BinaryIO,
     file_type: str | None = None,
-    chunk_size: int = CHUNK_SIZE
+    chunk_size: int | None = None
 ) -> RFQProcessingResult:
     """
-    Process an RFQ file (CSV or Excel) with async chunked processing.
+    Process an RFQ file (CSV, Excel, or PDF) with async chunked processing.
     
     Args:
         file_path: Path to the file or file-like object
-        file_type: File type ('csv', 'xlsx', 'xls'). Auto-detected if not provided.
-        chunk_size: Maximum rows per chunk
+        file_type: File type ('csv', 'xlsx', 'xls', 'pdf'). Auto-detected if not provided.
+        chunk_size: Maximum rows per chunk (CSV/Excel) or chars per chunk (PDF).
+                    If None, uses defaults: CHUNK_SIZE for tabular, PDF_CHUNK_SIZE for PDF.
         
     Returns:
         RFQProcessingResult with extracted items
@@ -384,7 +608,16 @@ async def process_rfq_file_async(
     
     file_type = file_type.lower()
     
-    # Load based on type (in thread to not block)
+    # Handle PDF files separately
+    if file_type == 'pdf':
+        pdf_chunk_size = chunk_size or PDF_CHUNK_SIZE
+        logger.info("Loading PDF file with marker")
+        text = await asyncio.to_thread(load_pdf_with_marker, file_path)
+        return await process_pdf_text_async(text, chunk_size=pdf_chunk_size)
+    
+    # Handle tabular files (CSV, Excel)
+    tabular_chunk_size = chunk_size or CHUNK_SIZE
+    
     if file_type == 'csv':
         logger.info("Loading CSV file")
         df = await asyncio.to_thread(load_csv, file_path)
@@ -392,11 +625,11 @@ async def process_rfq_file_async(
         logger.info("Loading Excel file")
         df = await asyncio.to_thread(load_excel, file_path)
     else:
-        raise ValueError(f"Unsupported file type: {file_type}. Supported: csv, xlsx, xls")
+        raise ValueError(f"Unsupported file type: {file_type}. Supported: csv, xlsx, xls, pdf")
     
     logger.info(f"Loaded {len(df)} rows, {len(df.columns)} columns")
     
-    return await process_rfq_dataframe_async(df, source_type=file_type, chunk_size=chunk_size)
+    return await process_rfq_dataframe_async(df, source_type=file_type, chunk_size=tabular_chunk_size)
 
 
 def process_rfq_file(

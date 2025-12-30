@@ -263,17 +263,21 @@ class RFQUploadResponse(BaseModel):
 @app.post("/upload-rfq", response_model=RFQUploadResponse)
 async def upload_rfq(
     file: UploadFile = File(...),
-    chunk_size: int = 50
+    chunk_size: int | None = None
 ):
     """
-    Upload an RFQ file (CSV or Excel) and extract structured search queries.
+    Upload an RFQ file (CSV, Excel, or PDF) and extract structured search queries.
     
     The file is processed in chunks for large files, with each item
     converted to an optimized search query with abbreviations expanded.
     
+    For PDFs, the document is first converted to text using marker, then
+    processed in text chunks.
+    
     Args:
-        file: RFQ file (CSV, XLSX, XLS)
-        chunk_size: Rows per chunk for processing (default 50)
+        file: RFQ file (CSV, XLSX, XLS, PDF)
+        chunk_size: Rows per chunk (CSV/Excel) or chars per chunk (PDF).
+                    Defaults: 50 rows for tabular, 4000 chars for PDF.
     
     Returns:
         Extracted items with raw text and search queries
@@ -286,10 +290,12 @@ async def upload_rfq(
         file_type = 'xlsx'
     elif filename.endswith('.xls'):
         file_type = 'xls'
+    elif filename.endswith('.pdf'):
+        file_type = 'pdf'
     else:
         raise HTTPException(
             status_code=400,
-            detail="Unsupported file type. Supported: CSV, XLSX, XLS"
+            detail="Unsupported file type. Supported: CSV, XLSX, XLS, PDF"
         )
     
     try:
