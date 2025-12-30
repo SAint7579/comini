@@ -1,4 +1,4 @@
-import { SearchRequest, SearchResponse, HealthResponse } from '@/types/api';
+import { SearchRequest, SearchResponse, HealthResponse, RFQUploadResponse } from '@/types/api';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -27,5 +27,30 @@ export async function checkHealth(): Promise<HealthResponse> {
   }
 
   return response.json();
+}
+
+export async function uploadRFQ(file: File): Promise<RFQUploadResponse> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await fetch(`${API_BASE_URL}/upload-rfq`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'RFQ upload failed');
+  }
+
+  return response.json();
+}
+
+export async function searchForRFQItem(query: string, topK: number = 5): Promise<SearchResponse> {
+  return searchProducts({
+    query,
+    top_k: topK,
+    expand_abbreviations: false, // Already expanded by RFQ processing
+  });
 }
 

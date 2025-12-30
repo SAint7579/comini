@@ -1,0 +1,121 @@
+.container {
+  margin-top: 2rem;
+}
+
+.heading {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 1rem;
+}
+
+.table {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.headerRow {
+  display: grid;
+  grid-template-columns: 1fr 100px 80px 120px 40px;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+}
+
+.headerCell {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr 100px 80px 120px 40px;
+  gap: 1rem;
+  padding: 1rem;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.row:last-child {
+  border-bottom: none;
+}
+
+.row:hover {
+  background: rgba(255, 107, 53, 0.05);
+}
+
+.cell {
+  display: flex;
+  align-items: center;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+}
+
+.icon {
+  margin-right: 0.75rem;
+  font-size: 1.25rem;
+}
+
+.filename {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.badge {
+  background: rgba(255, 107, 53, 0.15);
+  color: var(--accent);
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.count {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
+}
+
+.date {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.deleteBtn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  transition: color 0.2s ease;
+}
+
+.deleteBtn:hover {
+  color: #ef4444;
+}
+
+@media (max-width: 768px) {
+  .headerRow,
+  .row {
+    grid-template-columns: 1fr 60px 60px;
+  }
+
+  .headerCell:nth-child(4),
+  .headerCell:nth-child(5),
+  .cell:nth-child(4),
+  .cell:nth-child(5) {
+    display: none;
+  }
+}
+

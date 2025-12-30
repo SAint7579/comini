@@ -38,8 +38,8 @@ export default function Home() {
     <main className={styles.main}>
       <div className={styles.container}>
         <header className={styles.header}>
-          <h1 className={styles.logo}>Comini</h1>
-          <p className={styles.tagline}>Industrial Tools & Fasteners Search</p>
+          <h1 className={styles.title}>Product Search</h1>
+          <p className={styles.tagline}>Search the industrial tools & fasteners catalog</p>
         </header>
 
         <SearchBar onSearch={handleSearch} isLoading={isLoading} />

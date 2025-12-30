@@ -1,0 +1,39 @@
+.main {
+  min-height: calc(100vh - 60px);
+  padding: 2rem;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.header {
+  text-align: center;
+  padding: 2rem 0 1.5rem;
+}
+
+.title {
+  font-size: 1.75rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.tagline {
+  color: var(--text-secondary);
+  margin-top: 0.5rem;
+  font-weight: 300;
+  font-size: 0.95rem;
+}
+
+.emptyState {
+  text-align: center;
+  padding: 4rem 2rem;
+  color: var(--text-muted);
+}
+
+.emptyIcon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+}
+
