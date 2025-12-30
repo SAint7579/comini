@@ -13,6 +13,9 @@ from rag_utils.embedding_utils import (
     store_products_with_embeddings,
     check_db_health,
 )
+from std_utils import get_logger
+
+logger = get_logger("comini.api")
 
 
 @asynccontextmanager
@@ -67,7 +70,8 @@ async def upload_and_process_csv(
                 detail=f"Missing required columns: {missing}"
             )
         
-        # Process products (run in thread to not block event loop)
+        # Step 1: Process products
+        logger.info(f"[1/3] Processing {len(df)} products from CSV...")
         processed_df = await asyncio.to_thread(
             process_products, df, fetch_images=fetch_images
         )
@@ -77,21 +81,25 @@ async def upload_and_process_csv(
             processed_df['combined_description'].notna() & 
             (processed_df['combined_description'].str.strip() != '')
         ]
+        logger.info(f"[1/3] Processing complete. {len(processed_df)} valid products")
         
         if processed_df.empty:
             raise HTTPException(status_code=400, detail="No valid products to process")
         
-        # Generate embeddings in batches (async, parallelized)
+        # Step 2: Generate embeddings in batches (async, parallelized)
         descriptions = processed_df['combined_description'].tolist()
-        print(f"Generating embeddings for {len(descriptions)} products...")
+        logger.info(f"[2/3] Generating embeddings for {len(descriptions)} products...")
         embeddings = await asyncio.to_thread(
             generate_embeddings_batched, descriptions
         )
+        logger.info(f"[2/3] Embeddings complete. Generated {len(embeddings)} vectors")
         
-        # Store in database (run in thread)
+        # Step 3: Store in database (run in thread)
+        logger.info("[3/3] Storing products in database...")
         stored_count = await asyncio.to_thread(
             store_products_with_embeddings, processed_df, embeddings
         )
+        logger.info(f"[3/3] Database insert complete. Stored {stored_count} products")
         
         return ProcessingResponse(
             message="Products processed and stored successfully",
