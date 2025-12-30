@@ -166,19 +166,74 @@
   animation: fadeIn 0.2s ease;
 }
 
-.matchesHeader {
+.matchesList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* LLM Best Match Section */
+.bestMatchSection {
+  background: linear-gradient(135deg, rgba(255, 107, 53, 0.1), rgba(255, 107, 53, 0.05));
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.bestMatchHeader {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.bestMatchIcon {
+  font-size: 1rem;
+}
+
+.bestMatchTitle {
+  font-weight: 600;
+  color: var(--text-primary);
+  flex: 1;
+}
+
+.confidence {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--success);
+  background: rgba(74, 222, 128, 0.15);
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+}
+
+.bestMatchCard {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+}
+
+.reasoning {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-style: italic;
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+}
+
+/* Other Matches */
+.otherMatchesHeader {
   font-size: 0.75rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-muted);
-  margin-bottom: 0.75rem;
-}
-
-.matchesList {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
 }
 
 .matchCard {

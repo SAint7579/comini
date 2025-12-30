@@ -16,6 +16,9 @@ from .query_utils import (
     expand_query,
     expand_query_async,
     ExpandedQuery,
+    rerank_results,
+    rerank_results_async,
+    RerankResult,
 )
 
 __all__ = [
@@ -34,5 +37,8 @@ __all__ = [
     "expand_query",
     "expand_query_async",
     "ExpandedQuery",
+    "rerank_results",
+    "rerank_results_async",
+    "RerankResult",
 ]
 

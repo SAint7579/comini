@@ -2,6 +2,7 @@ export interface SearchRequest {
   query: string;
   top_k: number;
   expand_abbreviations: boolean;
+  rerank?: boolean;
 }
 
 export interface ProductMatch {
@@ -10,6 +11,14 @@ export interface ProductMatch {
   long_description: string | null;
   image_url: string | null;
   similarity_score: number;
+  is_llm_best_match: boolean;
+}
+
+export interface LLMRerankInfo {
+  best_match_index: number;
+  best_match_article: string;
+  confidence: string;
+  reasoning: string;
 }
 
 export interface SearchResponse {
@@ -17,6 +26,7 @@ export interface SearchResponse {
   expanded_query: string;
   detected_abbreviations: string[];
   matches: ProductMatch[];
+  llm_rerank: LLMRerankInfo | null;
 }
 
 export interface HealthResponse {

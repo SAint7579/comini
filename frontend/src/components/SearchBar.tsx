@@ -4,7 +4,7 @@ import { useState, KeyboardEvent } from 'react';
 import styles from './SearchBar.module.css';
 
 interface SearchBarProps {
-  onSearch: (query: string, topK: number, expandAbbreviations: boolean) => void;
+  onSearch: (query: string, topK: number, expandAbbreviations: boolean, rerank: boolean) => void;
   isLoading: boolean;
 }
 
@@ -12,10 +12,11 @@ export default function SearchBar({ onSearch, isLoading }: SearchBarProps) {
   const [query, setQuery] = useState('');
   const [topK, setTopK] = useState(20);
   const [expandAbbreviations, setExpandAbbreviations] = useState(true);
+  const [rerank, setRerank] = useState(true);
 
   const handleSearch = () => {
     if (query.trim()) {
-      onSearch(query.trim(), topK, expandAbbreviations);
+      onSearch(query.trim(), topK, expandAbbreviations, rerank);
     }
   };
 
@@ -53,7 +54,16 @@ export default function SearchBar({ onSearch, isLoading }: SearchBarProps) {
             checked={expandAbbreviations}
             onChange={(e) => setExpandAbbreviations(e.target.checked)}
           />
-          Expand abbreviations (LLM)
+          Expand abbreviations
+        </label>
+        
+        <label className={styles.optionLabel}>
+          <input
+            type="checkbox"
+            checked={rerank}
+            onChange={(e) => setRerank(e.target.checked)}
+          />
+          LLM best match
         </label>
         
         <label className={styles.optionLabel}>

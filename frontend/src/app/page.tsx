@@ -4,6 +4,7 @@ import { useState } from 'react';
 import SearchBar from '@/components/SearchBar';
 import ExpansionInfo from '@/components/ExpansionInfo';
 import ResultsList from '@/components/ResultsList';
+import LLMBestMatch from '@/components/LLMBestMatch';
 import { searchProducts } from '@/lib/api';
 import { SearchResponse } from '@/types/api';
 import styles from './page.module.css';
@@ -14,7 +15,7 @@ export default function Home() {
   const [searchResult, setSearchResult] = useState<SearchResponse | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
 
-  const handleSearch = async (query: string, topK: number, expandAbbreviations: boolean) => {
+  const handleSearch = async (query: string, topK: number, expandAbbreviations: boolean, rerank: boolean) => {
     setIsLoading(true);
     setError(null);
     setHasSearched(true);
@@ -24,6 +25,7 @@ export default function Home() {
         query,
         top_k: topK,
         expand_abbreviations: expandAbbreviations,
+        rerank,
       });
       setSearchResult(result);
     } catch (err) {
@@ -64,6 +66,12 @@ export default function Home() {
               expandedQuery={searchResult.expanded_query}
               abbreviations={searchResult.detected_abbreviations}
             />
+            {searchResult.llm_rerank && (
+              <LLMBestMatch 
+                rerank={searchResult.llm_rerank}
+                bestMatch={searchResult.matches.find(m => m.is_llm_best_match)}
+              />
+            )}
             <ResultsList results={searchResult.matches} />
           </>
         )}

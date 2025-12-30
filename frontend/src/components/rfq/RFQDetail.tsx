@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { RFQFileEntry, RFQItem, ProductMatch } from '@/types/api';
+import { RFQFileEntry, RFQItem, ProductMatch, LLMRerankInfo } from '@/types/api';
 import { searchForRFQItem } from '@/lib/api';
 import styles from './RFQDetail.module.css';
 
@@ -12,6 +12,7 @@ interface RFQDetailProps {
 
 interface ItemWithMatches extends RFQItem {
   matches: ProductMatch[];
+  llmRerank: LLMRerankInfo | null;
   isLoading: boolean;
   isExpanded: boolean;
   error?: string;
@@ -27,6 +28,7 @@ export default function RFQDetail({ file, onBack }: RFQDetailProps) {
       file.items.map((item) => ({
         ...item,
         matches: [],
+        llmRerank: null,
         isLoading: false,
         isExpanded: false,
       }))
@@ -42,11 +44,17 @@ export default function RFQDetail({ file, onBack }: RFQDetailProps) {
     );
 
     try {
-      const result = await searchForRFQItem(item.search_query, 5);
+      const result = await searchForRFQItem(item.search_query, 20);
       setItems((prev) =>
         prev.map((it, i) =>
           i === index
-            ? { ...it, matches: result.matches, isLoading: false, isExpanded: true }
+            ? { 
+                ...it, 
+                matches: result.matches, 
+                llmRerank: result.llm_rerank,
+                isLoading: false, 
+                isExpanded: true 
+              }
             : it
         )
       );
@@ -93,6 +101,16 @@ export default function RFQDetail({ file, onBack }: RFQDetailProps) {
     setLoadingAll(false);
   };
 
+  // Get the LLM best match from matches array
+  const getBestMatch = (item: ItemWithMatches): ProductMatch | undefined => {
+    return item.matches.find(m => m.is_llm_best_match);
+  };
+
+  // Get other matches (excluding the LLM best match)
+  const getOtherMatches = (item: ItemWithMatches): ProductMatch[] => {
+    return item.matches.filter(m => !m.is_llm_best_match);
+  };
+
   return (
     <div className={styles.container}>
       <div className={styles.header}>
@@ -115,70 +133,109 @@ export default function RFQDetail({ file, onBack }: RFQDetailProps) {
       </div>
 
       <div className={styles.itemsList}>
-        {items.map((item, index) => (
-          <div key={index} className={styles.itemCard}>
-            <div
-              className={styles.itemHeader}
-              onClick={() => toggleExpand(index)}
-            >
-              <div className={styles.itemInfo}>
-                <span className={styles.itemNumber}>#{index + 1}</span>
-                <div className={styles.itemText}>
-                  <p className={styles.rawText}>{item.raw_text}</p>
-                  <p className={styles.searchQuery}>
-                    🔍 {item.search_query}
-                  </p>
-                </div>
-                {item.quantity && (
-                  <span className={styles.quantity}>
-                    {item.quantity} {item.unit || 'pcs'}
-                  </span>
-                )}
-              </div>
-              <div className={styles.expandIcon}>
-                {item.isLoading ? (
-                  <div className={styles.miniSpinner} />
-                ) : (
-                  <span className={item.isExpanded ? styles.expanded : ''}>
-                    ▼
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {item.isExpanded && (
-              <div className={styles.matchesContainer}>
-                {item.error ? (
-                  <p className={styles.error}>{item.error}</p>
-                ) : item.matches.length === 0 ? (
-                  <p className={styles.noMatches}>No matches found</p>
-                ) : (
-                  <div className={styles.matchesList}>
-                    <div className={styles.matchesHeader}>Top Matches</div>
-                    {item.matches.map((match, mIndex) => (
-                      <div key={mIndex} className={styles.matchCard}>
-                        <div className={styles.matchHeader}>
-                          <span className={styles.articleNumber}>
-                            {match.article_number}
-                          </span>
-                          <span className={styles.score}>
-                            {(match.similarity_score * 100).toFixed(1)}%
-                          </span>
-                        </div>
-                        <p className={styles.matchDescription}>
-                          {match.combined_description.substring(0, 150)}
-                          {match.combined_description.length > 150 ? '...' : ''}
-                        </p>
-                      </div>
-                    ))}
+        {items.map((item, index) => {
+          const bestMatch = getBestMatch(item);
+          const otherMatches = getOtherMatches(item);
+          
+          return (
+            <div key={index} className={styles.itemCard}>
+              <div
+                className={styles.itemHeader}
+                onClick={() => toggleExpand(index)}
+              >
+                <div className={styles.itemInfo}>
+                  <span className={styles.itemNumber}>#{index + 1}</span>
+                  <div className={styles.itemText}>
+                    <p className={styles.rawText}>{item.raw_text}</p>
+                    <p className={styles.searchQuery}>
+                      🔍 {item.search_query}
+                    </p>
                   </div>
-                )}
+                  {item.quantity && (
+                    <span className={styles.quantity}>
+                      {item.quantity} {item.unit || 'pcs'}
+                    </span>
+                  )}
+                </div>
+                <div className={styles.expandIcon}>
+                  {item.isLoading ? (
+                    <div className={styles.miniSpinner} />
+                  ) : (
+                    <span className={item.isExpanded ? styles.expanded : ''}>
+                      ▼
+                    </span>
+                  )}
+                </div>
               </div>
-            )}
-          </div>
-        ))}
+
+              {item.isExpanded && (
+                <div className={styles.matchesContainer}>
+                  {item.error ? (
+                    <p className={styles.error}>{item.error}</p>
+                  ) : item.matches.length === 0 ? (
+                    <p className={styles.noMatches}>No matches found</p>
+                  ) : (
+                    <div className={styles.matchesList}>
+                      {/* LLM Best Match - Highlighted */}
+                      {bestMatch && item.llmRerank && (
+                        <div className={styles.bestMatchSection}>
+                          <div className={styles.bestMatchHeader}>
+                            <span className={styles.bestMatchIcon}>🎯</span>
+                            <span className={styles.bestMatchTitle}>LLM Best Match</span>
+                            <span className={styles.confidence}>{item.llmRerank.confidence}</span>
+                          </div>
+                          <div className={styles.bestMatchCard}>
+                            <div className={styles.matchHeader}>
+                              <span className={styles.articleNumber}>
+                                {bestMatch.article_number}
+                              </span>
+                              <span className={styles.score}>
+                                {(bestMatch.similarity_score * 100).toFixed(1)}%
+                              </span>
+                            </div>
+                            <p className={styles.matchDescription}>
+                              {bestMatch.combined_description.substring(0, 200)}
+                              {bestMatch.combined_description.length > 200 ? '...' : ''}
+                            </p>
+                            <p className={styles.reasoning}>
+                              {item.llmRerank.reasoning}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Other Matches */}
+                      {otherMatches.length > 0 && (
+                        <>
+                          <div className={styles.otherMatchesHeader}>
+                            Other Matches ({otherMatches.length})
+                          </div>
+                          {otherMatches.slice(0, 5).map((match, mIndex) => (
+                            <div key={mIndex} className={styles.matchCard}>
+                              <div className={styles.matchHeader}>
+                                <span className={styles.articleNumber}>
+                                  {match.article_number}
+                                </span>
+                                <span className={styles.score}>
+                                  {(match.similarity_score * 100).toFixed(1)}%
+                                </span>
+                              </div>
+                              <p className={styles.matchDescription}>
+                                {match.combined_description.substring(0, 150)}
+                                {match.combined_description.length > 150 ? '...' : ''}
+                              </p>
+                            </div>
+                          ))}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
 }
-

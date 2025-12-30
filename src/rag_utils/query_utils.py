@@ -152,6 +152,107 @@ async def expand_query_async(query: str) -> ExpandedQuery:
     return await asyncio.to_thread(expand_query, query)
 
 
+# ============================================================================
+# LLM Reranking
+# ============================================================================
+
+class RerankResult(BaseModel):
+    """Result from LLM reranking of search results."""
+    
+    best_match_index: int = Field(
+        description="The 0-based index of the best matching product from the list"
+    )
+    confidence: str = Field(
+        description="Confidence level: 'high', 'medium', or 'low'"
+    )
+    reasoning: str = Field(
+        description="Brief explanation of why this is the best match"
+    )
+
+
+RERANK_PROMPT = """You are an expert at matching product search queries to industrial tool and fastener products.
+
+Given a search query and a list of candidate products, identify which product is the BEST match.
+
+## Query
+{query}
+
+## Candidate Products (0-indexed)
+{products}
+
+## Instructions
+1. Analyze the query to understand what product is being requested
+2. Consider: product type, size, material, coating, drive type, and quantity
+3. Pick the single best match from the list
+4. If multiple seem equally good, prefer exact specification matches
+
+Return the index (0-based) of the best matching product, your confidence level, and brief reasoning."""
+
+
+def rerank_results(
+    query: str,
+    products: list[dict],
+) -> RerankResult:
+    """
+    Use LLM to identify the best match from a list of products.
+    
+    Args:
+        query: The original search query
+        products: List of product dicts with 'article_number' and 'combined_description'
+        
+    Returns:
+        RerankResult with the index of the best match
+    """
+    if not products:
+        return RerankResult(
+            best_match_index=0,
+            confidence="low",
+            reasoning="No products to rank"
+        )
+    
+    logger.info(f"Reranking {len(products)} results for query: {query}")
+    
+    # Format products for the prompt
+    products_text = "\n".join([
+        f"[{i}] {p.get('article_number', 'N/A')}: {p.get('combined_description', '')[:200]}"
+        for i, p in enumerate(products)
+    ])
+    
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    structured_llm = llm.with_structured_output(RerankResult)
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "You are an expert product matcher for industrial tools and fasteners."),
+        ("human", RERANK_PROMPT)
+    ])
+    
+    chain = prompt | structured_llm
+    
+    result = chain.invoke({
+        "query": query,
+        "products": products_text
+    })
+    
+    # Validate index is in range
+    if result.best_match_index < 0 or result.best_match_index >= len(products):
+        logger.warning(f"LLM returned invalid index {result.best_match_index}, defaulting to 0")
+        result.best_match_index = 0
+    
+    logger.info(f"Best match: index {result.best_match_index} ({result.confidence} confidence)")
+    logger.info(f"Reasoning: {result.reasoning}")
+    
+    return result
+
+
+async def rerank_results_async(
+    query: str,
+    products: list[dict],
+) -> RerankResult:
+    """Async version of rerank_results."""
+    import asyncio
+    return await asyncio.to_thread(rerank_results, query, products)
+
+
 if __name__ == "__main__":
     # Test the query expansion
     test_queries = [

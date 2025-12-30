@@ -11,11 +11,16 @@ export default function ResultCard({ product, index }: ResultCardProps) {
   
   return (
     <div 
-      className={styles.card}
+      className={`${styles.card} ${product.is_llm_best_match ? styles.bestMatch : ''}`}
       style={{ animationDelay: `${index * 0.05}s` }}
     >
       <div className={styles.header}>
-        <span className={styles.articleNumber}>{product.article_number}</span>
+        <div className={styles.headerLeft}>
+          <span className={styles.articleNumber}>{product.article_number}</span>
+          {product.is_llm_best_match && (
+            <span className={styles.bestMatchBadge}>🎯 LLM Pick</span>
+          )}
+        </div>
         <span className={styles.score}>{similarityPercent}%</span>
       </div>
       

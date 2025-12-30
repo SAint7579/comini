@@ -46,11 +46,12 @@ export async function uploadRFQ(file: File): Promise<RFQUploadResponse> {
   return response.json();
 }
 
-export async function searchForRFQItem(query: string, topK: number = 5): Promise<SearchResponse> {
+export async function searchForRFQItem(query: string, topK: number = 20): Promise<SearchResponse> {
   return searchProducts({
     query,
     top_k: topK,
     expand_abbreviations: false, // Already expanded by RFQ processing
+    rerank: true, // Enable LLM reranking to find best match
   });
 }
 

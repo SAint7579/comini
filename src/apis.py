@@ -16,7 +16,7 @@ from rag_utils.embedding_utils import (
     get_db_connection,
     check_db_health,
 )
-from rag_utils.query_utils import expand_query_async, ExpandedQuery
+from rag_utils.query_utils import expand_query_async, ExpandedQuery, rerank_results_async, RerankResult
 from document_utils.rfq_processing import (
     process_rfq_file_async,
     RFQItem,
@@ -135,6 +135,7 @@ class SearchRequest(BaseModel):
     query: str
     top_k: int = 20
     expand_abbreviations: bool = True  # Set to False to skip LLM expansion
+    rerank: bool = True  # Use LLM to pick the best match from top_k
 
 
 class ProductMatch(BaseModel):
@@ -143,6 +144,15 @@ class ProductMatch(BaseModel):
     long_description: str | None
     image_url: str | None
     similarity_score: float
+    is_llm_best_match: bool = False  # True if LLM selected this as best match
+
+
+class LLMRerankInfo(BaseModel):
+    """Information about the LLM reranking result."""
+    best_match_index: int
+    best_match_article: str
+    confidence: str
+    reasoning: str
 
 
 class SearchResponse(BaseModel):
@@ -150,46 +160,48 @@ class SearchResponse(BaseModel):
     expanded_query: str
     detected_abbreviations: list[str]
     matches: list[ProductMatch]
+    llm_rerank: LLMRerankInfo | None = None  # Populated if rerank=True
 
 
 @app.post("/search", response_model=SearchResponse)
 async def search_products(request: SearchRequest):
     """
-    Search for products using semantic similarity.
+    Search for products using semantic similarity with optional LLM reranking.
     
     The query is first expanded using an LLM to handle abbreviations,
     then matched against product embeddings using cosine similarity.
+    Optionally, an LLM reranks the results to pick the best match.
     
     Args:
-        request: Search query and number of results (default 20)
+        request: Search query, number of results (default 20), and options
     
     Returns:
-        Expanded query info and top matching products with similarity scores
+        Expanded query info, top matching products, and LLM's best pick
     """
-    logger.info(f"Search request: {request.query} (expand={request.expand_abbreviations})")
+    logger.info(f"Search request: {request.query} (expand={request.expand_abbreviations}, rerank={request.rerank})")
     
     try:
         # Step 1: Expand query using LLM (optional)
         if request.expand_abbreviations:
-            logger.info("[1/3] Expanding query with LLM...")
+            logger.info("[1/4] Expanding query with LLM...")
             expanded = await expand_query_async(request.query)
             search_query = expanded.expanded_query
             detected_abbrevs = expanded.detected_abbreviations
-            logger.info(f"[1/3] Expanded: '{search_query}'")
+            logger.info(f"[1/4] Expanded: '{search_query}'")
         else:
-            logger.info("[1/3] Skipping query expansion (disabled)")
+            logger.info("[1/4] Skipping query expansion (disabled)")
             search_query = request.query
             detected_abbrevs = []
         
         # Step 2: Generate embedding for search query
-        logger.info("[2/3] Generating query embedding...")
+        logger.info("[2/4] Generating query embedding...")
         query_embedding = await asyncio.to_thread(
             generate_query_embedding, search_query
         )
-        logger.info("[2/3] Query embedding generated")
+        logger.info("[2/4] Query embedding generated")
         
         # Step 3: Search database using cosine similarity
-        logger.info(f"[3/3] Searching for top {request.top_k} matches...")
+        logger.info(f"[3/4] Searching for top {request.top_k} matches...")
         
         conn = get_db_connection()
         cur = conn.cursor()
@@ -213,25 +225,60 @@ async def search_products(request: SearchRequest):
         cur.close()
         conn.close()
         
-        logger.info(f"[3/3] Found {len(results)} matches")
+        logger.info(f"[3/4] Found {len(results)} matches")
         
-        # Build response
+        # Step 4: LLM Reranking (optional)
+        llm_rerank_info = None
+        best_match_index = -1
+        
+        if request.rerank and len(results) > 0:
+            logger.info("[4/4] Reranking with LLM...")
+            
+            # Prepare products for reranking
+            products_for_rerank = [
+                {
+                    "article_number": row[0],
+                    "combined_description": row[1],
+                }
+                for row in results
+            ]
+            
+            rerank_result = await rerank_results_async(
+                request.query,  # Use original query for reranking
+                products_for_rerank
+            )
+            
+            best_match_index = rerank_result.best_match_index
+            llm_rerank_info = LLMRerankInfo(
+                best_match_index=best_match_index,
+                best_match_article=results[best_match_index][0],
+                confidence=rerank_result.confidence,
+                reasoning=rerank_result.reasoning,
+            )
+            
+            logger.info(f"[4/4] LLM picked index {best_match_index}: {results[best_match_index][0]}")
+        else:
+            logger.info("[4/4] Skipping reranking (disabled or no results)")
+        
+        # Build response with LLM best match flag
         matches = [
             ProductMatch(
                 article_number=row[0],
                 combined_description=row[1],
                 long_description=row[2],
                 image_url=row[3],
-                similarity_score=round(row[4], 4)
+                similarity_score=round(row[4], 4),
+                is_llm_best_match=(i == best_match_index)
             )
-            for row in results
+            for i, row in enumerate(results)
         ]
         
         return SearchResponse(
             original_query=request.query,
             expanded_query=search_query,
             detected_abbreviations=detected_abbrevs,
-            matches=matches
+            matches=matches,
+            llm_rerank=llm_rerank_info,
         )
         
     except Exception as e:
