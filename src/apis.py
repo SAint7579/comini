@@ -4,14 +4,23 @@ from contextlib import asynccontextmanager
 
 import pandas as pd
 from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from rag_utils.data_preprocessing import process_products
 from rag_utils.embedding_utils import (
     init_db,
     generate_embeddings_batched,
+    generate_query_embedding,
     store_products_with_embeddings,
+    get_db_connection,
     check_db_health,
+)
+from rag_utils.query_utils import expand_query_async, ExpandedQuery
+from document_utils.rfq_processing import (
+    process_rfq_file_async,
+    RFQItem,
+    RFQProcessingResult,
 )
 from std_utils import get_logger
 
@@ -29,6 +38,15 @@ app = FastAPI(
     title="Comini Product RAG API",
     description="API for processing product data and storing embeddings",
     lifespan=lifespan
+)
+
+# CORS middleware for frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -110,6 +128,207 @@ async def upload_and_process_csv(
     except pd.errors.EmptyDataError:
         raise HTTPException(status_code=400, detail="CSV file is empty")
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class SearchRequest(BaseModel):
+    query: str
+    top_k: int = 20
+    expand_abbreviations: bool = True  # Set to False to skip LLM expansion
+
+
+class ProductMatch(BaseModel):
+    article_number: str
+    combined_description: str
+    long_description: str | None
+    image_url: str | None
+    similarity_score: float
+
+
+class SearchResponse(BaseModel):
+    original_query: str
+    expanded_query: str
+    detected_abbreviations: list[str]
+    matches: list[ProductMatch]
+
+
+@app.post("/search", response_model=SearchResponse)
+async def search_products(request: SearchRequest):
+    """
+    Search for products using semantic similarity.
+    
+    The query is first expanded using an LLM to handle abbreviations,
+    then matched against product embeddings using cosine similarity.
+    
+    Args:
+        request: Search query and number of results (default 20)
+    
+    Returns:
+        Expanded query info and top matching products with similarity scores
+    """
+    logger.info(f"Search request: {request.query} (expand={request.expand_abbreviations})")
+    
+    try:
+        # Step 1: Expand query using LLM (optional)
+        if request.expand_abbreviations:
+            logger.info("[1/3] Expanding query with LLM...")
+            expanded = await expand_query_async(request.query)
+            search_query = expanded.expanded_query
+            detected_abbrevs = expanded.detected_abbreviations
+            logger.info(f"[1/3] Expanded: '{search_query}'")
+        else:
+            logger.info("[1/3] Skipping query expansion (disabled)")
+            search_query = request.query
+            detected_abbrevs = []
+        
+        # Step 2: Generate embedding for search query
+        logger.info("[2/3] Generating query embedding...")
+        query_embedding = await asyncio.to_thread(
+            generate_query_embedding, search_query
+        )
+        logger.info("[2/3] Query embedding generated")
+        
+        # Step 3: Search database using cosine similarity
+        logger.info(f"[3/3] Searching for top {request.top_k} matches...")
+        
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # Cosine similarity: 1 - cosine_distance
+        # pgvector's <=> operator returns cosine distance
+        cur.execute("""
+            SELECT 
+                article_number,
+                combined_description,
+                long_description,
+                image_url,
+                1 - (embedding <=> %s::vector) as similarity_score
+            FROM products
+            WHERE embedding IS NOT NULL
+            ORDER BY embedding <=> %s::vector
+            LIMIT %s
+        """, (query_embedding, query_embedding, request.top_k))
+        
+        results = cur.fetchall()
+        cur.close()
+        conn.close()
+        
+        logger.info(f"[3/3] Found {len(results)} matches")
+        
+        # Build response
+        matches = [
+            ProductMatch(
+                article_number=row[0],
+                combined_description=row[1],
+                long_description=row[2],
+                image_url=row[3],
+                similarity_score=round(row[4], 4)
+            )
+            for row in results
+        ]
+        
+        return SearchResponse(
+            original_query=request.query,
+            expanded_query=search_query,
+            detected_abbreviations=detected_abbrevs,
+            matches=matches
+        )
+        
+    except Exception as e:
+        logger.error(f"Search error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# RFQ Processing Endpoints
+# ============================================================================
+
+class RFQItemResponse(BaseModel):
+    """Single RFQ item in API response."""
+    raw_text: str
+    search_query: str
+    quantity: int | None
+    unit: str | None
+    notes: str | None
+
+
+class RFQUploadResponse(BaseModel):
+    """Response from RFQ file upload."""
+    source_type: str
+    total_items: int
+    chunks_processed: int
+    items: list[RFQItemResponse]
+
+
+@app.post("/upload-rfq", response_model=RFQUploadResponse)
+async def upload_rfq(
+    file: UploadFile = File(...),
+    chunk_size: int = 50
+):
+    """
+    Upload an RFQ file (CSV or Excel) and extract structured search queries.
+    
+    The file is processed in chunks for large files, with each item
+    converted to an optimized search query with abbreviations expanded.
+    
+    Args:
+        file: RFQ file (CSV, XLSX, XLS)
+        chunk_size: Rows per chunk for processing (default 50)
+    
+    Returns:
+        Extracted items with raw text and search queries
+    """
+    # Validate file type
+    filename = file.filename.lower()
+    if filename.endswith('.csv'):
+        file_type = 'csv'
+    elif filename.endswith('.xlsx'):
+        file_type = 'xlsx'
+    elif filename.endswith('.xls'):
+        file_type = 'xls'
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file type. Supported: CSV, XLSX, XLS"
+        )
+    
+    try:
+        logger.info(f"Processing RFQ upload: {file.filename} ({file_type})")
+        
+        # Read file contents
+        contents = await file.read()
+        file_obj = io.BytesIO(contents)
+        
+        # Process RFQ with async chunked processing
+        result = await process_rfq_file_async(
+            file_obj,
+            file_type=file_type,
+            chunk_size=chunk_size
+        )
+        
+        logger.info(f"RFQ processed: {result.total_items} items from {result.chunks_processed} chunks")
+        
+        # Convert to response model
+        return RFQUploadResponse(
+            source_type=result.source_type,
+            total_items=result.total_items,
+            chunks_processed=result.chunks_processed,
+            items=[
+                RFQItemResponse(
+                    raw_text=item.raw_text,
+                    search_query=item.search_query,
+                    quantity=item.quantity,
+                    unit=item.unit,
+                    notes=item.notes
+                )
+                for item in result.items
+            ]
+        )
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"RFQ processing error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

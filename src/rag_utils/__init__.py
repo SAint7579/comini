@@ -12,6 +12,11 @@ from .embedding_utils import (
     EMBEDDING_MODEL,
     EMBEDDING_DIMENSIONS,
 )
+from .query_utils import (
+    expand_query,
+    expand_query_async,
+    ExpandedQuery,
+)
 
 __all__ = [
     "process_products",
@@ -26,5 +31,8 @@ __all__ = [
     "ProductSearchResult",
     "EMBEDDING_MODEL",
     "EMBEDDING_DIMENSIONS",
+    "expand_query",
+    "expand_query_async",
+    "ExpandedQuery",
 ]
 
