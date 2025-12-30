@@ -20,6 +20,36 @@ services:
       timeout: 5s
       retries: 5
 
+  adminer:
+    image: adminer:latest
+    container_name: comini-adminer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+
+  api:
+    build: .
+    container_name: comini-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: comini_db
+      POSTGRES_USER: comini
+      POSTGRES_PASSWORD: comini_secret
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+    volumes:
+      - ./Data:/app/Data
+
 volumes:
   postgres_data:
 
