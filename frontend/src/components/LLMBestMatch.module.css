@@ -31,26 +31,48 @@
   letter-spacing: 0.05em;
 }
 
+.matchesList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
 .matchCard {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 1rem;
-  margin-bottom: 1rem;
+  transition: border-color 0.2s ease;
+}
+
+.matchCard:first-child {
+  border-color: var(--accent);
+  background: linear-gradient(135deg, rgba(255, 107, 53, 0.08), var(--bg-card));
+}
+
+.matchCard:hover {
+  border-color: var(--accent);
 }
 
 .matchHeader {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: 0.75rem;
   margin-bottom: 0.5rem;
+}
+
+.rankBadge {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
 .articleNumber {
   font-family: 'JetBrains Mono', monospace;
   color: var(--accent);
-  font-size: 1rem;
+  font-size: 0.9rem;
   font-weight: 600;
+  flex: 1;
 }
 
 .score {
@@ -59,26 +81,36 @@
   font-family: 'JetBrains Mono', monospace;
 }
 
-.description {
+.headline {
   color: var(--text-primary);
   font-size: 0.9rem;
-  line-height: 1.5;
+  font-weight: 500;
+  line-height: 1.4;
+  margin-bottom: 0.5rem;
+}
+
+.features {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+
+.feature {
+  background: rgba(255, 107, 53, 0.1);
+  color: var(--text-secondary);
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  border: 1px solid rgba(255, 107, 53, 0.2);
 }
 
 .reasoning {
-  display: flex;
-  gap: 0.5rem;
-  font-size: 0.85rem;
-}
-
-.reasoningLabel {
   color: var(--text-muted);
-  flex-shrink: 0;
-}
-
-.reasoningText {
-  color: var(--text-secondary);
+  font-size: 0.8rem;
   font-style: italic;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
 }
 
 @keyframes fadeIn {
@@ -91,4 +123,3 @@
     transform: translateY(0);
   }
 }
-

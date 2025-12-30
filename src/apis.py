@@ -84,15 +84,20 @@ class ProductMatch(BaseModel):
     additional_info: str | None
     
     similarity_score: float
-    is_llm_best_match: bool = False  # True if LLM selected this as best match
+    llm_rank: int | None = None  # 1, 2, or 3 if LLM selected this as top match
+
+
+class LLMRankedMatch(BaseModel):
+    """A single match from LLM reranking."""
+    index: int
+    article_number: str
+    reasoning: str
 
 
 class LLMRerankInfo(BaseModel):
-    """Information about the LLM reranking result."""
-    best_match_index: int
-    best_match_article: str
+    """Information about the LLM reranking result - top 3 matches."""
+    top_matches: list[LLMRankedMatch]  # Top 3 matches with reasoning
     confidence: str
-    reasoning: str
 
 
 class SearchRequest(BaseModel):
@@ -274,7 +279,7 @@ async def search_products(request: SearchRequest):
         
         # Step 4: LLM Reranking (optional)
         llm_rerank_info = None
-        best_match_index = -1
+        top_match_indices = {}  # Map index -> rank (1, 2, or 3)
         
         if request.rerank and len(results) > 0:
             logger.info("[4/4] Reranking with LLM...")
@@ -301,19 +306,26 @@ async def search_products(request: SearchRequest):
                 products_for_rerank
             )
             
-            best_match_index = rerank_result.best_match_index
+            # Build top matches info and index-to-rank mapping
+            top_ranked_matches = []
+            for rank, match in enumerate(rerank_result.top_matches, start=1):
+                top_match_indices[match.index] = rank
+                top_ranked_matches.append(LLMRankedMatch(
+                    index=match.index,
+                    article_number=results[match.index][0],
+                    reasoning=match.reasoning,
+                ))
+            
             llm_rerank_info = LLMRerankInfo(
-                best_match_index=best_match_index,
-                best_match_article=results[best_match_index][0],
+                top_matches=top_ranked_matches,
                 confidence=rerank_result.confidence,
-                reasoning=rerank_result.reasoning,
             )
             
-            logger.info(f"[4/4] LLM picked index {best_match_index}: {results[best_match_index][0]}")
+            logger.info(f"[4/4] LLM top 3: {[m.index for m in rerank_result.top_matches]} ({rerank_result.confidence} confidence)")
         else:
             logger.info("[4/4] Skipping reranking (disabled or no results)")
         
-        # Build response with LLM best match flag
+        # Build response with LLM rank
         matches = [
             ProductMatch(
                 article_number=row[0],
@@ -329,7 +341,7 @@ async def search_products(request: SearchRequest):
                 application=row[10],
                 additional_info=row[11],
                 similarity_score=round(row[12], 4),
-                is_llm_best_match=(i == best_match_index)
+                llm_rank=top_match_indices.get(i)  # None if not in top 3
             )
             for i, row in enumerate(results)
         ]
@@ -352,12 +364,21 @@ async def search_products(request: SearchRequest):
 # ============================================================================
 
 class RFQItemResponse(BaseModel):
-    """Single RFQ item in API response."""
+    """Single RFQ item in API response with structured fields matching product schema."""
     raw_text: str
     search_query: str
     quantity: int | None
     unit: str | None
     notes: str | None
+    
+    # Structured fields matching product schema
+    standard: str | None = None
+    materials: str | None = None
+    size: str | None = None
+    dimensions: str | None = None
+    category: str | None = None
+    brand: str | None = None
+    application: str | None = None
 
 
 class RFQUploadResponse(BaseModel):

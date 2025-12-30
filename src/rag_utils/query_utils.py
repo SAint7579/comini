@@ -277,24 +277,31 @@ async def expand_query_structured_async(query: str) -> StructuredQuery:
 # LLM Reranking
 # ============================================================================
 
-class RerankResult(BaseModel):
-    """Result from LLM reranking of search results."""
+class RankedMatch(BaseModel):
+    """A single ranked match from LLM reranking."""
     
-    best_match_index: int = Field(
-        description="The 0-based index of the best matching product from the list"
+    index: int = Field(
+        description="The 0-based index of the matching product from the list"
     )
     reasoning: str = Field(
-        description="Brief explanation of why this is the best match"
-    )
-    confidence: str = Field(
-        description="Confidence level: 'high', 'medium', or 'low'"
+        description="Brief explanation of why this product matches the query"
     )
 
+
+class RerankResult(BaseModel):
+    """Result from LLM reranking of search results - top 3 matches."""
+    
+    top_matches: list[RankedMatch] = Field(
+        description="Top 3 best matching products, ordered from best to third-best"
+    )
+    confidence: str = Field(
+        description="Overall confidence level: 'high', 'medium', or 'low'"
+    )
 
 
 RERANK_PROMPT = """You are an expert at matching product search queries to industrial tool and fastener products.
 
-Given a search query and a list of candidate products with their extracted features, identify which product is the BEST match.
+Given a search query and a list of candidate products with their extracted features, identify the TOP 3 BEST matches.
 
 ## Query
 {query}
@@ -306,10 +313,11 @@ Given a search query and a list of candidate products with their extracted featu
 1. Analyze the query to understand what product is being requested
 2. Consider all product features: category, size, dimensions, materials, standard, brand, application
 3. Match specific requirements: size specifications, material types, coating, drive types
-4. Pick the single best match from the list
-5. If multiple seem equally good, prefer exact specification matches
+4. Select the TOP 3 best matches in order (best first, second best, third best)
+5. If fewer than 3 products are good matches, still provide 3 (even if some are weak matches)
+6. Provide brief reasoning for each selection
 
-Return the index (0-based) of the best matching product, your confidence level, and brief reasoning."""
+Return the indices (0-based) of the top 3 matching products with reasoning for each, plus overall confidence level."""
 
 
 def format_product_for_rerank(idx: int, product: dict) -> str:
@@ -349,20 +357,19 @@ def rerank_results(
     products: list[dict],
 ) -> RerankResult:
     """
-    Use LLM to identify the best match from a list of products.
+    Use LLM to identify the top 3 best matches from a list of products.
     
     Args:
         query: The original search query
         products: List of product dicts with article_number, headline, and LLM-extracted features
         
     Returns:
-        RerankResult with the index of the best match
+        RerankResult with the indices of the top 3 best matches
     """
     if not products:
         return RerankResult(
-            best_match_index=0,
-            confidence="low",
-            reasoning="No products to rank"
+            top_matches=[RankedMatch(index=0, reasoning="No products to rank")],
+            confidence="low"
         )
     
     logger.info(f"Reranking {len(products)} results for query: {query}")
@@ -388,13 +395,23 @@ def rerank_results(
         "products": products_text
     })
     
-    # Validate index is in range
-    if result.best_match_index < 0 or result.best_match_index >= len(products):
-        logger.warning(f"LLM returned invalid index {result.best_match_index}, defaulting to 0")
-        result.best_match_index = 0
+    # Validate all indices are in range
+    valid_matches = []
+    for match in result.top_matches:
+        if 0 <= match.index < len(products):
+            valid_matches.append(match)
+        else:
+            logger.warning(f"LLM returned invalid index {match.index}, skipping")
     
-    logger.info(f"Best match: index {result.best_match_index} ({result.confidence} confidence)")
-    logger.info(f"Reasoning: {result.reasoning}")
+    # Ensure we have at least one match
+    if not valid_matches:
+        valid_matches = [RankedMatch(index=0, reasoning="Fallback to first result")]
+    
+    result.top_matches = valid_matches[:3]  # Limit to top 3
+    
+    logger.info(f"Top matches: {[m.index for m in result.top_matches]} ({result.confidence} confidence)")
+    for i, match in enumerate(result.top_matches):
+        logger.info(f"  #{i+1}: index {match.index} - {match.reasoning[:50]}...")
     
     return result
 

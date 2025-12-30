@@ -69,7 +69,7 @@ export default function Home() {
             {searchResult.llm_rerank && (
               <LLMBestMatch 
                 rerank={searchResult.llm_rerank}
-                bestMatch={searchResult.matches.find(m => m.is_llm_best_match)}
+                matches={searchResult.matches}
               />
             )}
             <ResultsList results={searchResult.matches} />

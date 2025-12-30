@@ -12,7 +12,11 @@
   transform: translateX(4px);
 }
 
-.bestMatch {
+.ranked {
+  border-color: rgba(255, 107, 53, 0.4);
+}
+
+.topRanked {
   border-color: var(--accent);
   background: linear-gradient(135deg, rgba(255, 107, 53, 0.08), var(--bg-card));
   box-shadow: 0 0 20px rgba(255, 107, 53, 0.15);
@@ -38,12 +42,12 @@
   font-weight: 600;
 }
 
-.bestMatchBadge {
-  background: var(--accent);
+.rankBadge {
+  background: linear-gradient(135deg, var(--accent), #e55a2b);
   color: white;
-  padding: 0.2rem 0.5rem;
+  padding: 0.2rem 0.6rem;
   border-radius: 4px;
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   font-weight: 600;
 }
 
@@ -62,6 +66,30 @@
   font-size: 0.95rem;
   line-height: 1.5;
   margin-bottom: 0.5rem;
+}
+
+.headline {
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  font-weight: 500;
+  line-height: 1.4;
+  margin-bottom: 0.6rem;
+}
+
+.features {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
+}
+
+.feature {
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  border: 1px solid var(--border);
 }
 
 .longDescription {

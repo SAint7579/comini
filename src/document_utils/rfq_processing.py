@@ -48,14 +48,14 @@ MAX_CONCURRENT_CHUNKS = 5  # Limit concurrent API calls
 # ============================================================================
 
 class RFQItem(BaseModel):
-    """A single item extracted from an RFQ document."""
+    """A single item extracted from an RFQ document with structured fields matching product schema."""
     
     raw_text: str = Field(
         description="The original raw text from the RFQ for this item"
     )
     search_query: str = Field(
-        description="A cleaned, expanded search query optimized for product matching. "
-                    "Expand abbreviations and normalize product terminology."
+        description="A cleaned, expanded search query combining all structured fields. "
+                    "Format: 'original_text Category: X Size: Y Materials: Z ...' for semantic search."
     )
     quantity: int | None = Field(
         default=None,
@@ -68,6 +68,36 @@ class RFQItem(BaseModel):
     notes: str | None = Field(
         default=None,
         description="Any additional notes or specifications"
+    )
+    
+    # Structured fields matching product schema
+    standard: str | None = Field(
+        default=None,
+        description="Industry standards (DIN, ISO, VDE) if mentioned"
+    )
+    materials: str | None = Field(
+        default=None,
+        description="Materials, coatings, surface treatments (e.g., 'galvanized steel', 'stainless A2')"
+    )
+    size: str | None = Field(
+        default=None,
+        description="Size specifications (e.g., 'Torx TX25', 'M6 thread', '1/4 inch drive')"
+    )
+    dimensions: str | None = Field(
+        default=None,
+        description="Physical dimensions (e.g., 'Length 100mm', 'Diameter 6mm')"
+    )
+    category: str | None = Field(
+        default=None,
+        description="Product category/type (e.g., 'Screwdriver Bit', 'Hex Nut', 'Socket Wrench')"
+    )
+    brand: str | None = Field(
+        default=None,
+        description="Brand/manufacturer if specified"
+    )
+    application: str | None = Field(
+        default=None,
+        description="Intended use or application if mentioned"
     )
 
 
@@ -107,7 +137,7 @@ class RFQProcessingResult(BaseModel):
 RFQ_EXTRACTION_PROMPT = """You are an expert at parsing Request for Quote (RFQ) documents for industrial tools and fasteners.
 
 ## Your Task
-Extract each line item from the RFQ data and convert it into a structured search query.
+Extract each line item from the RFQ data into STRUCTURED fields that match our product database schema.
 
 ## Context: Industrial Tools & Fasteners
 The catalog contains products from Würth Industrie including:
@@ -127,15 +157,27 @@ The catalog contains products from Würth Industrie including:
 - SORT → Sortiment (assortment), TLG → Teilig (pieces)
 - 6KT → Sechskant (hexagon)
 
+## Structured Fields to Extract (for each item)
+1. **raw_text**: The original text exactly as it appears
+2. **category**: Product type (e.g., 'Screwdriver Bit', 'Hex Nut', 'Socket Wrench')
+3. **size**: Size specifications with abbreviations expanded (e.g., 'Torx TX25', 'M6 thread')
+4. **dimensions**: Physical dimensions (e.g., 'Length 100mm')
+5. **materials**: Materials and coatings expanded (e.g., 'galvanisch verzinkt steel')
+6. **standard**: Industry standards if mentioned (DIN, ISO)
+7. **brand**: Brand/manufacturer if specified
+8. **application**: Intended use if mentioned
+9. **quantity**: Numeric quantity
+10. **unit**: Unit of measurement (Stück, pcs, kg)
+11. **notes**: Any additional specifications
+12. **search_query**: Combine raw_text + structured fields for search:
+    Format: "raw_text Category: X Size: Y Materials: Z ..." (only include non-null fields)
+
 ## Instructions
 1. Parse each row/line as a separate item
-2. Extract the raw text exactly as it appears
-3. Create an optimized search query by:
-   - Expanding abbreviations
-   - Normalizing product names
-   - Keeping important specifications (size, material, coating)
-4. Extract quantity and unit if present
-5. Note any special requirements or specifications
+2. Extract structured information into the correct fields
+3. Expand ALL abbreviations in the structured fields
+4. Build search_query by combining raw_text with the structured fields
+5. Only include fields that have values (skip null fields in search_query)
 
 Return ALL items found in this chunk."""
 

@@ -18,6 +18,15 @@ interface ItemWithMatches extends RFQItem {
   error?: string;
 }
 
+function getRankEmoji(rank: number): string {
+  switch (rank) {
+    case 1: return '🥇';
+    case 2: return '🥈';
+    case 3: return '🥉';
+    default: return '🎯';
+  }
+}
+
 export default function RFQDetail({ file, onBack }: RFQDetailProps) {
   const [items, setItems] = useState<ItemWithMatches[]>([]);
   const [loadingAll, setLoadingAll] = useState(false);
@@ -101,14 +110,19 @@ export default function RFQDetail({ file, onBack }: RFQDetailProps) {
     setLoadingAll(false);
   };
 
-  // Get the LLM best match from matches array
-  const getBestMatch = (item: ItemWithMatches): ProductMatch | undefined => {
-    return item.matches.find(m => m.is_llm_best_match);
+  // Get top 3 LLM ranked matches
+  const getTopMatches = (item: ItemWithMatches): { match: ProductMatch; rank: number; reasoning: string }[] => {
+    if (!item.llmRerank) return [];
+    
+    return item.llmRerank.top_matches.map((ranked, idx) => {
+      const match = item.matches.find(m => m.article_number === ranked.article_number);
+      return match ? { match, rank: idx + 1, reasoning: ranked.reasoning } : null;
+    }).filter(Boolean) as { match: ProductMatch; rank: number; reasoning: string }[];
   };
 
-  // Get other matches (excluding the LLM best match)
+  // Get other matches (excluding top 3)
   const getOtherMatches = (item: ItemWithMatches): ProductMatch[] => {
-    return item.matches.filter(m => !m.is_llm_best_match);
+    return item.matches.filter(m => m.llm_rank === null);
   };
 
   return (
@@ -134,7 +148,7 @@ export default function RFQDetail({ file, onBack }: RFQDetailProps) {
 
       <div className={styles.itemsList}>
         {items.map((item, index) => {
-          const bestMatch = getBestMatch(item);
+          const topMatches = getTopMatches(item);
           const otherMatches = getOtherMatches(item);
           
           return (
@@ -147,9 +161,15 @@ export default function RFQDetail({ file, onBack }: RFQDetailProps) {
                   <span className={styles.itemNumber}>#{index + 1}</span>
                   <div className={styles.itemText}>
                     <p className={styles.rawText}>{item.raw_text}</p>
-                    <p className={styles.searchQuery}>
-                      🔍 {item.search_query}
-                    </p>
+                    <div className={styles.structuredQuery}>
+                      {item.category && <span className={styles.queryFeature}>📦 {item.category}</span>}
+                      {item.size && <span className={styles.queryFeature}>📏 {item.size}</span>}
+                      {item.materials && <span className={styles.queryFeature}>🔩 {item.materials}</span>}
+                      {item.standard && <span className={styles.queryFeature}>📋 {item.standard}</span>}
+                      {item.dimensions && <span className={styles.queryFeature}>📐 {item.dimensions}</span>}
+                      {item.brand && <span className={styles.queryFeature}>🏷️ {item.brand}</span>}
+                      {item.application && <span className={styles.queryFeature}>🔧 {item.application}</span>}
+                    </div>
                   </div>
                   {item.quantity && (
                     <span className={styles.quantity}>
@@ -176,31 +196,41 @@ export default function RFQDetail({ file, onBack }: RFQDetailProps) {
                     <p className={styles.noMatches}>No matches found</p>
                   ) : (
                     <div className={styles.matchesList}>
-                      {/* LLM Best Match - Highlighted */}
-                      {bestMatch && item.llmRerank && (
+                      {/* LLM Top 3 Matches - Highlighted */}
+                      {topMatches.length > 0 && item.llmRerank && (
                         <div className={styles.bestMatchSection}>
                           <div className={styles.bestMatchHeader}>
                             <span className={styles.bestMatchIcon}>🎯</span>
-                            <span className={styles.bestMatchTitle}>LLM Best Match</span>
+                            <span className={styles.bestMatchTitle}>LLM Top Matches</span>
                             <span className={styles.confidence}>{item.llmRerank.confidence}</span>
                           </div>
-                          <div className={styles.bestMatchCard}>
-                            <div className={styles.matchHeader}>
-                              <span className={styles.articleNumber}>
-                                {bestMatch.article_number}
-                              </span>
-                              <span className={styles.score}>
-                                {(bestMatch.similarity_score * 100).toFixed(1)}%
-                              </span>
+                          
+                          {topMatches.map(({ match, rank, reasoning }) => (
+                            <div 
+                              key={match.article_number} 
+                              className={`${styles.bestMatchCard} ${rank === 1 ? styles.topRanked : ''}`}
+                            >
+                              <div className={styles.matchHeader}>
+                                <span className={styles.rankBadge}>
+                                  {getRankEmoji(rank)} #{rank}
+                                </span>
+                                <span className={styles.articleNumber}>
+                                  {match.article_number}
+                                </span>
+                                <span className={styles.score}>
+                                  {(match.similarity_score * 100).toFixed(1)}%
+                                </span>
+                              </div>
+                              <p className={styles.headline}>{match.headline}</p>
+                              <div className={styles.features}>
+                                {match.category && <span className={styles.feature}>📦 {match.category}</span>}
+                                {match.size && <span className={styles.feature}>📏 {match.size}</span>}
+                                {match.materials && <span className={styles.feature}>🔩 {match.materials}</span>}
+                                {match.standard && <span className={styles.feature}>📋 {match.standard}</span>}
+                              </div>
+                              <p className={styles.reasoning}>{reasoning}</p>
                             </div>
-                            <p className={styles.matchDescription}>
-                              {bestMatch.combined_description.substring(0, 200)}
-                              {bestMatch.combined_description.length > 200 ? '...' : ''}
-                            </p>
-                            <p className={styles.reasoning}>
-                              {item.llmRerank.reasoning}
-                            </p>
-                          </div>
+                          ))}
                         </div>
                       )}
                       
@@ -220,10 +250,12 @@ export default function RFQDetail({ file, onBack }: RFQDetailProps) {
                                   {(match.similarity_score * 100).toFixed(1)}%
                                 </span>
                               </div>
-                              <p className={styles.matchDescription}>
-                                {match.combined_description.substring(0, 150)}
-                                {match.combined_description.length > 150 ? '...' : ''}
-                              </p>
+                              <p className={styles.headline}>{match.headline}</p>
+                              <div className={styles.features}>
+                                {match.category && <span className={styles.feature}>📦 {match.category}</span>}
+                                {match.size && <span className={styles.feature}>📏 {match.size}</span>}
+                                {match.materials && <span className={styles.feature}>🔩 {match.materials}</span>}
+                              </div>
                             </div>
                           ))}
                         </>

@@ -7,18 +7,33 @@ export interface SearchRequest {
 
 export interface ProductMatch {
   article_number: string;
-  combined_description: string;
+  headline: string;
   long_description: string | null;
   image_url: string | null;
+  
+  // LLM-extracted features
+  standard: string | null;
+  materials: string | null;
+  size: string | null;
+  dimensions: string | null;
+  category: string | null;
+  brand: string | null;
+  application: string | null;
+  additional_info: string | null;
+  
   similarity_score: number;
-  is_llm_best_match: boolean;
+  llm_rank: number | null;  // 1, 2, or 3 if LLM selected this as top match
+}
+
+export interface LLMRankedMatch {
+  index: number;
+  article_number: string;
+  reasoning: string;
 }
 
 export interface LLMRerankInfo {
-  best_match_index: number;
-  best_match_article: string;
+  top_matches: LLMRankedMatch[];  // Top 3 matches with reasoning
   confidence: string;
-  reasoning: string;
 }
 
 export interface SearchResponse {
@@ -34,13 +49,22 @@ export interface HealthResponse {
   database: string;
 }
 
-// RFQ Types
+// RFQ Types - Structured format matching product schema
 export interface RFQItem {
   raw_text: string;
   search_query: string;
   quantity: number | null;
   unit: string | null;
   notes: string | null;
+  
+  // Structured fields (same as product schema)
+  standard: string | null;
+  materials: string | null;
+  size: string | null;
+  dimensions: string | null;
+  category: string | null;
+  brand: string | null;
+  application: string | null;
 }
 
 export interface RFQUploadResponse {
@@ -64,4 +88,3 @@ export interface RFQItemWithMatches extends RFQItem {
   isLoading?: boolean;
   error?: string;
 }
-

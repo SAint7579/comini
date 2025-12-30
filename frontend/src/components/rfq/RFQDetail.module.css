@@ -127,6 +127,23 @@
   font-size: 0.85rem;
 }
 
+/* Structured query display for RFQ items */
+.structuredQuery {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+}
+
+.queryFeature {
+  background: rgba(255, 107, 53, 0.1);
+  color: var(--text-secondary);
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  border: 1px solid rgba(255, 107, 53, 0.2);
+}
+
 .quantity {
   background: rgba(74, 222, 128, 0.15);
   color: var(--success);
@@ -214,6 +231,23 @@
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 0.75rem 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.bestMatchCard:last-child {
+  margin-bottom: 0;
+}
+
+.bestMatchCard.topRanked {
+  border-color: var(--accent);
+  background: linear-gradient(135deg, rgba(255, 107, 53, 0.08), var(--bg-card));
+}
+
+.rankBadge {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-right: 0.5rem;
 }
 
 .reasoning {
@@ -277,6 +311,31 @@
   color: var(--text-secondary);
   font-size: 0.85rem;
   line-height: 1.4;
+}
+
+/* Headline and structured features for matches */
+.headline {
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-weight: 500;
+  margin-bottom: 0.4rem;
+  line-height: 1.4;
+}
+
+.features {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+}
+
+.feature {
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  padding: 0.15rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.7rem;
+  border: 1px solid var(--border);
 }
 
 .noMatches {

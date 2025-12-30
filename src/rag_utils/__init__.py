@@ -31,6 +31,7 @@ from .query_utils import (
     rerank_results,
     rerank_results_async,
     RerankResult,
+    RankedMatch,
 )
 
 __all__ = [
@@ -65,4 +66,5 @@ __all__ = [
     "rerank_results",
     "rerank_results_async",
     "RerankResult",
+    "RankedMatch",
 ]
