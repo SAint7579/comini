@@ -1,3 +1,12 @@
+"""
+FastAPI application for Product RAG system.
+
+Provides endpoints for:
+- CSV product upload with LLM feature extraction
+- Semantic product search with query expansion and LLM reranking
+- RFQ file processing
+"""
+
 import io
 import asyncio
 from contextlib import asynccontextmanager
@@ -13,15 +22,12 @@ from rag_utils.embedding_utils import (
     generate_embeddings_batched,
     generate_query_embedding,
     store_products_with_embeddings,
+    build_embedding_text,
     get_db_connection,
     check_db_health,
 )
-from rag_utils.query_utils import expand_query_async, ExpandedQuery, rerank_results_async, RerankResult
-from document_utils.rfq_processing import (
-    process_rfq_file_async,
-    RFQItem,
-    RFQProcessingResult,
-)
+from rag_utils.query_utils import expand_query_async, rerank_results_async
+from document_utils.rfq_processing import process_rfq_file_async
 from std_utils import get_logger
 
 logger = get_logger("comini.api")
@@ -36,7 +42,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Comini Product RAG API",
-    description="API for processing product data and storing embeddings",
+    description="API for processing product data with LLM feature extraction and semantic search",
     lifespan=lifespan
 )
 
@@ -50,23 +56,77 @@ app.add_middleware(
 )
 
 
+# ============================================================================
+# Response Models
+# ============================================================================
+
 class ProcessingResponse(BaseModel):
     message: str
     products_processed: int
     products_stored: int
 
 
+class ProductMatch(BaseModel):
+    """Product match from search results."""
+    article_number: str
+    headline: str
+    long_description: str | None
+    image_url: str | None
+    
+    # LLM-extracted features
+    standard: str | None
+    materials: str | None
+    size: str | None
+    dimensions: str | None
+    category: str | None
+    brand: str | None
+    application: str | None
+    additional_info: str | None
+    
+    similarity_score: float
+    is_llm_best_match: bool = False  # True if LLM selected this as best match
+
+
+class LLMRerankInfo(BaseModel):
+    """Information about the LLM reranking result."""
+    best_match_index: int
+    best_match_article: str
+    confidence: str
+    reasoning: str
+
+
+class SearchRequest(BaseModel):
+    query: str
+    top_k: int = 20
+    expand_abbreviations: bool = True  # Set to False to skip LLM expansion
+    rerank: bool = True  # Use LLM to pick the best match from top_k
+
+
+class SearchResponse(BaseModel):
+    original_query: str
+    expanded_query: str
+    detected_abbreviations: list[str]
+    matches: list[ProductMatch]
+    llm_rerank: LLMRerankInfo | None = None  # Populated if rerank=True
+
+
+# ============================================================================
+# CSV Upload Endpoint
+# ============================================================================
+
 @app.post("/upload-csv", response_model=ProcessingResponse)
 async def upload_and_process_csv(
     file: UploadFile = File(...),
-    fetch_images: bool = False
+    fetch_images: bool = False,
+    max_workers_llm: int = 20
 ):
     """
-    Upload a CSV file, process it, generate embeddings, and store in database.
+    Upload a CSV file, extract features with LLM, generate embeddings, and store in database.
     
     Args:
         file: CSV file with product data
         fetch_images: Whether to fetch image URLs from product pages (slow)
+        max_workers_llm: Number of parallel LLM calls for feature extraction
     
     Returns:
         Processing summary with counts
@@ -88,31 +148,36 @@ async def upload_and_process_csv(
                 detail=f"Missing required columns: {missing}"
             )
         
-        # Step 1: Process products
-        logger.info(f"[1/3] Processing {len(df)} products from CSV...")
+        # Step 1: Process products with LLM feature extraction
+        logger.info(f"[1/3] Processing {len(df)} products with LLM feature extraction...")
         processed_df = await asyncio.to_thread(
-            process_products, df, fetch_images=fetch_images
+            process_products, df,
+            max_workers_llm=max_workers_llm,
+            fetch_images=fetch_images
         )
         
-        # Filter out rows with empty descriptions
+        # Filter out rows with empty headlines
         processed_df = processed_df[
-            processed_df['combined_description'].notna() & 
-            (processed_df['combined_description'].str.strip() != '')
+            processed_df['headline'].notna() & 
+            (processed_df['headline'].str.strip() != '')
         ]
         logger.info(f"[1/3] Processing complete. {len(processed_df)} valid products")
         
         if processed_df.empty:
             raise HTTPException(status_code=400, detail="No valid products to process")
         
-        # Step 2: Generate embeddings in batches (async, parallelized)
-        descriptions = processed_df['combined_description'].tolist()
-        logger.info(f"[2/3] Generating embeddings for {len(descriptions)} products...")
+        # Step 2: Build embedding texts and generate embeddings
+        logger.info(f"[2/3] Generating embeddings for {len(processed_df)} products...")
+        embedding_texts = [
+            build_embedding_text(row) 
+            for _, row in processed_df.iterrows()
+        ]
         embeddings = await asyncio.to_thread(
-            generate_embeddings_batched, descriptions
+            generate_embeddings_batched, embedding_texts
         )
         logger.info(f"[2/3] Embeddings complete. Generated {len(embeddings)} vectors")
         
-        # Step 3: Store in database (run in thread)
+        # Step 3: Store in database
         logger.info("[3/3] Storing products in database...")
         stored_count = await asyncio.to_thread(
             store_products_with_embeddings, processed_df, embeddings
@@ -120,7 +185,7 @@ async def upload_and_process_csv(
         logger.info(f"[3/3] Database insert complete. Stored {stored_count} products")
         
         return ProcessingResponse(
-            message="Products processed and stored successfully",
+            message="Products processed with LLM feature extraction and stored successfully",
             products_processed=len(df),
             products_stored=stored_count
         )
@@ -128,40 +193,13 @@ async def upload_and_process_csv(
     except pd.errors.EmptyDataError:
         raise HTTPException(status_code=400, detail="CSV file is empty")
     except Exception as e:
+        logger.error(f"Upload error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
-class SearchRequest(BaseModel):
-    query: str
-    top_k: int = 20
-    expand_abbreviations: bool = True  # Set to False to skip LLM expansion
-    rerank: bool = True  # Use LLM to pick the best match from top_k
-
-
-class ProductMatch(BaseModel):
-    article_number: str
-    combined_description: str
-    long_description: str | None
-    image_url: str | None
-    similarity_score: float
-    is_llm_best_match: bool = False  # True if LLM selected this as best match
-
-
-class LLMRerankInfo(BaseModel):
-    """Information about the LLM reranking result."""
-    best_match_index: int
-    best_match_article: str
-    confidence: str
-    reasoning: str
-
-
-class SearchResponse(BaseModel):
-    original_query: str
-    expanded_query: str
-    detected_abbreviations: list[str]
-    matches: list[ProductMatch]
-    llm_rerank: LLMRerankInfo | None = None  # Populated if rerank=True
-
+# ============================================================================
+# Search Endpoint
+# ============================================================================
 
 @app.post("/search", response_model=SearchResponse)
 async def search_products(request: SearchRequest):
@@ -206,14 +244,21 @@ async def search_products(request: SearchRequest):
         conn = get_db_connection()
         cur = conn.cursor()
         
-        # Cosine similarity: 1 - cosine_distance
-        # pgvector's <=> operator returns cosine distance
+        # Query with all LLM-extracted feature columns
         cur.execute("""
             SELECT 
                 article_number,
-                combined_description,
+                headline,
                 long_description,
                 image_url,
+                standard,
+                materials,
+                size,
+                dimensions,
+                category,
+                brand,
+                application,
+                additional_info,
                 1 - (embedding <=> %s::vector) as similarity_score
             FROM products
             WHERE embedding IS NOT NULL
@@ -234,11 +279,19 @@ async def search_products(request: SearchRequest):
         if request.rerank and len(results) > 0:
             logger.info("[4/4] Reranking with LLM...")
             
-            # Prepare products for reranking
+            # Prepare products for reranking - include all relevant features
             products_for_rerank = [
                 {
                     "article_number": row[0],
-                    "combined_description": row[1],
+                    "headline": row[1],
+                    "long_description": row[2],
+                    "standard": row[4],
+                    "materials": row[5],
+                    "size": row[6],
+                    "dimensions": row[7],
+                    "category": row[8],
+                    "brand": row[9],
+                    "application": row[10],
                 }
                 for row in results
             ]
@@ -264,10 +317,18 @@ async def search_products(request: SearchRequest):
         matches = [
             ProductMatch(
                 article_number=row[0],
-                combined_description=row[1],
+                headline=row[1],
                 long_description=row[2],
                 image_url=row[3],
-                similarity_score=round(row[4], 4),
+                standard=row[4],
+                materials=row[5],
+                size=row[6],
+                dimensions=row[7],
+                category=row[8],
+                brand=row[9],
+                application=row[10],
+                additional_info=row[11],
+                similarity_score=round(row[12], 4),
                 is_llm_best_match=(i == best_match_index)
             )
             for i, row in enumerate(results)
@@ -282,7 +343,7 @@ async def search_products(request: SearchRequest):
         )
         
     except Exception as e:
-        logger.error(f"Search error: {e}")
+        logger.error(f"Search error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -318,13 +379,9 @@ async def upload_rfq(
     The file is processed in chunks for large files, with each item
     converted to an optimized search query with abbreviations expanded.
     
-    For PDFs, the document is first converted to text using marker, then
-    processed in text chunks.
-    
     Args:
         file: RFQ file (CSV, XLSX, XLS, PDF)
         chunk_size: Rows per chunk (CSV/Excel) or chars per chunk (PDF).
-                    Defaults: 50 rows for tabular, 4000 chars for PDF.
     
     Returns:
         Extracted items with raw text and search queries
@@ -381,9 +438,13 @@ async def upload_rfq(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"RFQ processing error: {e}")
+        logger.error(f"RFQ processing error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ============================================================================
+# Health Check
+# ============================================================================
 
 @app.get("/health")
 async def health_check():

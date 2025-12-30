@@ -1,3 +1,10 @@
+"""
+Embedding utilities for product RAG system.
+
+This module handles database connections, embedding generation,
+and product storage/retrieval with vector similarity search.
+"""
+
 import os
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -32,9 +39,17 @@ EMBEDDING_DIMENSIONS = 1536
 class ProductSearchResult:
     """Result from a product similarity search."""
     article_number: str
-    combined_description: str
+    headline: str
     long_description: str | None
     image_url: str | None
+    standard: str | None
+    materials: str | None
+    size: str | None
+    dimensions: str | None
+    category: str | None
+    brand: str | None
+    application: str | None
+    additional_info: str | None
     similarity: float
 
 
@@ -51,17 +66,34 @@ def init_db():
     conn = get_db_connection()
     cur = conn.cursor()
     
-    logger.info("Creating products table with vector column")
-    # Create products table with vector column
+    logger.info("Creating products table with LLM-extracted feature columns")
+    # Create products table with all LLM-extracted feature columns
     cur.execute(f"""
         CREATE TABLE IF NOT EXISTS products (
             id SERIAL PRIMARY KEY,
+            
+            -- Core identification
             article_number TEXT UNIQUE NOT NULL,
-            combined_description TEXT,
+            headline TEXT NOT NULL,
             long_description TEXT,
             image_url TEXT,
+            
+            -- LLM-extracted structured features
+            standard TEXT,
+            materials TEXT,
+            size TEXT,
+            dimensions TEXT,
+            category TEXT,
+            brand TEXT,
+            application TEXT,
+            additional_info TEXT,
+            
+            -- Vector embedding for semantic search
             embedding vector({EMBEDDING_DIMENSIONS}),
-            created_at TIMESTAMPTZ DEFAULT NOW()
+            
+            -- Metadata
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
         );
     """)
     
@@ -72,6 +104,11 @@ def init_db():
         ON products USING hnsw (embedding vector_cosine_ops)
         WITH (m = 16, ef_construction = 64);
     """)
+    
+    # Create indexes on commonly queried fields
+    cur.execute("CREATE INDEX IF NOT EXISTS products_category_idx ON products (category);")
+    cur.execute("CREATE INDEX IF NOT EXISTS products_brand_idx ON products (brand);")
+    cur.execute("CREATE INDEX IF NOT EXISTS products_standard_idx ON products (standard);")
     
     conn.commit()
     cur.close()
@@ -166,6 +203,47 @@ def generate_query_embedding(query: str) -> list[float]:
     return embeddings_model.embed_query(query)
 
 
+def build_embedding_text(row: pd.Series) -> str:
+    """
+    Build the text to embed from product features.
+    
+    Combines headline, long description, and extracted features
+    into a single searchable text.
+    
+    Args:
+        row: DataFrame row with product features
+        
+    Returns:
+        Combined text for embedding
+    """
+    parts = []
+    
+    # Core text
+    if pd.notna(row.get('headline')):
+        parts.append(row['headline'])
+    if pd.notna(row.get('long_description')):
+        parts.append(row['long_description'])
+    
+    # LLM-extracted features
+    feature_fields = [
+        ('Standard', 'standard'),
+        ('Materials', 'materials'),
+        ('Size', 'size'),
+        ('Dimensions', 'dimensions'),
+        ('Category', 'category'),
+        ('Brand', 'brand'),
+        ('Application', 'application'),
+        ('Additional', 'additional_info'),
+    ]
+    
+    for label, field in feature_fields:
+        value = row.get(field)
+        if pd.notna(value) and str(value).strip():
+            parts.append(f"{label}: {value}")
+    
+    return ' '.join(parts)
+
+
 def store_products_with_embeddings(
     processed_df: pd.DataFrame,
     embeddings: list[list[float]]
@@ -174,7 +252,7 @@ def store_products_with_embeddings(
     Store products with their embeddings in the database.
     
     Args:
-        processed_df: DataFrame with processed product data
+        processed_df: DataFrame with processed product data (with LLM-extracted features)
         embeddings: List of embedding vectors matching the DataFrame rows
         
     Returns:
@@ -192,9 +270,17 @@ def store_products_with_embeddings(
     for idx, row in processed_df.iterrows():
         records.append((
             row['article_number'],
-            row['combined_description'],
-            row['long_description'],
-            row['image_url'],
+            row['headline'],
+            row.get('long_description'),
+            row.get('image_url'),
+            row.get('standard'),
+            row.get('materials'),
+            row.get('size'),
+            row.get('dimensions'),
+            row.get('category'),
+            row.get('brand'),
+            row.get('application'),
+            row.get('additional_info'),
             embeddings[processed_df.index.get_loc(idx)]
         ))
     logger.info(f"Prepared {len(records)} records")
@@ -202,17 +288,33 @@ def store_products_with_embeddings(
     # Upsert products (update if article_number exists)
     logger.info("Executing upsert query...")
     insert_query = """
-        INSERT INTO products (article_number, combined_description, long_description, image_url, embedding)
+        INSERT INTO products (
+            article_number, headline, long_description, image_url,
+            standard, materials, size, dimensions, category, brand, application, additional_info,
+            embedding
+        )
         VALUES %s
         ON CONFLICT (article_number) 
         DO UPDATE SET 
-            combined_description = EXCLUDED.combined_description,
+            headline = EXCLUDED.headline,
             long_description = EXCLUDED.long_description,
             image_url = EXCLUDED.image_url,
-            embedding = EXCLUDED.embedding
+            standard = EXCLUDED.standard,
+            materials = EXCLUDED.materials,
+            size = EXCLUDED.size,
+            dimensions = EXCLUDED.dimensions,
+            category = EXCLUDED.category,
+            brand = EXCLUDED.brand,
+            application = EXCLUDED.application,
+            additional_info = EXCLUDED.additional_info,
+            embedding = EXCLUDED.embedding,
+            updated_at = NOW()
     """
     
-    execute_values(cur, insert_query, records, template="(%s, %s, %s, %s, %s::vector)")
+    execute_values(
+        cur, insert_query, records,
+        template="(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::vector)"
+    )
     logger.info("Upsert query executed successfully")
     
     logger.info("Committing transaction...")
@@ -250,11 +352,20 @@ def search_similar_products(
     cur.execute("""
         SELECT 
             article_number,
-            combined_description,
+            headline,
             long_description,
             image_url,
+            standard,
+            materials,
+            size,
+            dimensions,
+            category,
+            brand,
+            application,
+            additional_info,
             1 - (embedding <=> %s::vector) as similarity
         FROM products
+        WHERE embedding IS NOT NULL
         ORDER BY embedding <=> %s::vector
         LIMIT %s
     """, (query_embedding, query_embedding, top_k))
@@ -267,10 +378,18 @@ def search_similar_products(
     return [
         ProductSearchResult(
             article_number=row[0],
-            combined_description=row[1],
+            headline=row[1],
             long_description=row[2],
             image_url=row[3],
-            similarity=row[4]
+            standard=row[4],
+            materials=row[5],
+            size=row[6],
+            dimensions=row[7],
+            category=row[8],
+            brand=row[9],
+            application=row[10],
+            additional_info=row[11],
+            similarity=row[12]
         )
         for row in results
     ]
@@ -292,4 +411,3 @@ def check_db_health() -> bool:
         return True
     except Exception:
         return False
-

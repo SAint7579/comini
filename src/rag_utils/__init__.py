@@ -1,4 +1,11 @@
-from .data_preprocessing import process_products
+from .data_preprocessing import (
+    process_products,
+    process_products_async,
+    extract_product_features,
+    extract_product_features_batch,
+    ProductFeatures,
+    ProcessedProduct,
+)
 from .embedding_utils import (
     init_db,
     get_db_connection,
@@ -7,6 +14,7 @@ from .embedding_utils import (
     generate_query_embedding,
     store_products_with_embeddings,
     search_similar_products,
+    build_embedding_text,
     check_db_health,
     ProductSearchResult,
     EMBEDDING_MODEL,
@@ -15,14 +23,25 @@ from .embedding_utils import (
 from .query_utils import (
     expand_query,
     expand_query_async,
+    expand_query_structured,
+    expand_query_structured_async,
+    build_search_text_from_query,
     ExpandedQuery,
+    StructuredQuery,
     rerank_results,
     rerank_results_async,
     RerankResult,
 )
 
 __all__ = [
+    # Data preprocessing
     "process_products",
+    "process_products_async",
+    "extract_product_features",
+    "extract_product_features_batch",
+    "ProductFeatures",
+    "ProcessedProduct",
+    # Embedding utilities
     "init_db",
     "get_db_connection",
     "generate_embeddings",
@@ -30,15 +49,20 @@ __all__ = [
     "generate_query_embedding",
     "store_products_with_embeddings",
     "search_similar_products",
+    "build_embedding_text",
     "check_db_health",
     "ProductSearchResult",
     "EMBEDDING_MODEL",
     "EMBEDDING_DIMENSIONS",
+    # Query utilities
     "expand_query",
     "expand_query_async",
+    "expand_query_structured",
+    "expand_query_structured_async",
+    "build_search_text_from_query",
     "ExpandedQuery",
+    "StructuredQuery",
     "rerank_results",
     "rerank_results_async",
     "RerankResult",
 ]
-
