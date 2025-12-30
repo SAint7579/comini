@@ -162,51 +162,80 @@ def load_excel(file_path: str | Path | BinaryIO) -> pd.DataFrame:
     return pd.read_excel(file_path)
 
 
-def load_pdf_with_marker(file_path: str | Path | BinaryIO) -> str:
+def load_pdf(file_path: str | Path | BinaryIO) -> str:
     """
-    Load a PDF file and convert to markdown text using marker.
+    Load a PDF file and extract text using pypdf.
     
     Args:
         file_path: Path to PDF file or file-like object
         
     Returns:
-        Extracted text in markdown format
+        Extracted text from PDF
     """
-    from marker.converters.pdf import PdfConverter
-    from marker.models import create_model_dict
-    from marker.output import text_from_rendered
+    from pypdf import PdfReader
     
-    # Handle file-like objects by writing to temp file
-    if hasattr(file_path, 'read'):
-        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
-            tmp.write(file_path.read())
-            tmp_path = tmp.name
-        try:
-            return _convert_pdf_with_marker(tmp_path)
-        finally:
-            Path(tmp_path).unlink(missing_ok=True)
-    else:
-        return _convert_pdf_with_marker(str(file_path))
-
-
-def _convert_pdf_with_marker(pdf_path: str) -> str:
-    """Internal function to convert PDF using marker."""
-    from marker.converters.pdf import PdfConverter
-    from marker.models import create_model_dict
-    from marker.output import text_from_rendered
+    logger.info("Extracting text from PDF with pypdf")
     
-    logger.info(f"Converting PDF with marker: {pdf_path}")
+    reader = PdfReader(file_path)
     
-    # Create model dict and converter
-    model_dict = create_model_dict()
-    converter = PdfConverter(artifact_dict=model_dict)
+    text_parts = []
+    for i, page in enumerate(reader.pages):
+        page_text = page.extract_text()
+        if page_text:
+            text_parts.append(f"--- Page {i + 1} ---\n{page_text}")
     
-    # Convert PDF to markdown
-    rendered = converter(pdf_path)
-    text, _, _ = text_from_rendered(rendered)
+    text = "\n\n".join(text_parts)
+    logger.info(f"PDF extracted: {len(text)} characters from {len(reader.pages)} pages")
     
-    logger.info(f"PDF converted: {len(text)} characters extracted")
     return text
+
+
+# Commented out - marker requires large ML models
+# def load_pdf_with_marker(file_path: str | Path | BinaryIO) -> str:
+#     """
+#     Load a PDF file and convert to markdown text using marker.
+#     
+#     Args:
+#         file_path: Path to PDF file or file-like object
+#         
+#     Returns:
+#         Extracted text in markdown format
+#     """
+#     from marker.converters.pdf import PdfConverter
+#     from marker.models import create_model_dict
+#     from marker.output import text_from_rendered
+#     
+#     # Handle file-like objects by writing to temp file
+#     if hasattr(file_path, 'read'):
+#         with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
+#             tmp.write(file_path.read())
+#             tmp_path = tmp.name
+#         try:
+#             return _convert_pdf_with_marker(tmp_path)
+#         finally:
+#             Path(tmp_path).unlink(missing_ok=True)
+#     else:
+#         return _convert_pdf_with_marker(str(file_path))
+#
+#
+# def _convert_pdf_with_marker(pdf_path: str) -> str:
+#     """Internal function to convert PDF using marker."""
+#     from marker.converters.pdf import PdfConverter
+#     from marker.models import create_model_dict
+#     from marker.output import text_from_rendered
+#     
+#     logger.info(f"Converting PDF with marker: {pdf_path}")
+#     
+#     # Create model dict and converter
+#     model_dict = create_model_dict()
+#     converter = PdfConverter(artifact_dict=model_dict)
+#     
+#     # Convert PDF to markdown
+#     rendered = converter(pdf_path)
+#     text, _, _ = text_from_rendered(rendered)
+#     
+#     logger.info(f"PDF converted: {len(text)} characters extracted")
+#     return text
 
 
 def chunk_text(text: str, chunk_size: int = PDF_CHUNK_SIZE) -> list[str]:
@@ -612,7 +641,7 @@ async def process_rfq_file_async(
     if file_type == 'pdf':
         pdf_chunk_size = chunk_size or PDF_CHUNK_SIZE
         logger.info("Loading PDF file with marker")
-        text = await asyncio.to_thread(load_pdf_with_marker, file_path)
+        text = await asyncio.to_thread(load_pdf, file_path)
         return await process_pdf_text_async(text, chunk_size=pdf_chunk_size)
     
     # Handle tabular files (CSV, Excel)
